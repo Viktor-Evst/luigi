@@ -29,7 +29,7 @@ from luigi import six
 
 from luigi import configuration
 from luigi.target import FileSystemTarget, AtomicLocalFile
-from luigi.format import get_default_format, MixedUnicodeBytes
+from luigi.format import get_default_format
 
 logger = logging.getLogger("luigi-interface")
 
@@ -49,10 +49,6 @@ class WebHdfsTarget(FileSystemTarget):
         self.fs = client or WebHdfsClient()
         if format is None:
             format = get_default_format()
-
-        # Allow to write unicode in file for retrocompatibility
-        if sys.version_info[:2] <= (2, 6):
-            format = format >> MixedUnicodeBytes
 
         self.format = format
 
@@ -137,7 +133,7 @@ class WebHdfsClient(object):
             return config.get('hdfs', key)
         except:
             raise RuntimeError("You must specify %s in the [hdfs] section of "
-                               "the luigi client.cfg file" % key)
+                               "the luigi.cfg file" % key)
 
     def walk(self, path, depth=1):
         return self.webhdfs.walk(path, depth=depth)

@@ -71,11 +71,11 @@ class Runner(object):
 def print_exception(exc):
     tb = traceback.format_exc()
     print('luigi-exc-hex=%s' % binascii.hexlify(bytes(tb, 'UTF-8')), file=sys.stderr)
+    # print('luigi-exc-hex=%s' % tb.encode('hex'), file=sys.stderr)
 
 
 def main(args=None, stdin=sys.stdin, stdout=sys.stdout, print_exception=print_exception):
     """
-    MAIN
     Run either the mapper or the reducer from the class instance in the file "job-instance.pickle".
 
     Arguments:

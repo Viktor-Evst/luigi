@@ -27,6 +27,7 @@ try:
 except ImportError:
     from configparser import NoOptionError, NoSectionError
 
+from luigi import task_register
 from luigi import six
 
 from luigi import configuration
@@ -81,13 +82,10 @@ class Parameter(object):
             foo = luigi.Parameter()
 
     This makes it possible to instantiate multiple tasks, eg ``MyTask(foo='bar')`` and
-    ``My(foo='baz')``. The task will then have the ``foo`` attribute set appropriately.
+    ``MyTask(foo='baz')``. The task will then have the ``foo`` attribute set appropriately.
 
     There are subclasses of ``Parameter`` that define what type the parameter has. This is not
     enforced within Python, but are used for command line interaction.
-
-    The ``config_path`` argument lets you specify a place where the parameter is read from config
-    in case no value is provided.
 
     When a task is instantiated, it will first use any argument as the value of the parameter, eg.
     if you instantiate a = TaskA(x=44) then a.x == 44. If this does not exist, it will use the value
@@ -317,7 +315,7 @@ class Parameter(object):
             else:
                 return param_name
 
-    def add_to_cmdline_parser(self, parser, param_name, task_name, optparse=False, glob=False, is_without_section=False):
+    def add_to_cmdline_parser(self, parser, param_name, task_name, glob=False, is_without_section=False):
         dest = self.parser_dest(param_name, task_name, glob, is_without_section=is_without_section)
         if not dest:
             return
@@ -339,14 +337,11 @@ class Parameter(object):
             action = "store_true"
         else:
             action = "store"
-        if optparse:
-            f = parser.add_option
-        else:
-            f = parser.add_argument
-        f(flag,
-          help=' '.join(description),
-          action=action,
-          dest=dest)
+
+        parser.add_argument(flag,
+                            help=' '.join(description),
+                            action=action,
+                            dest=dest)
 
     def parse_from_args(self, param_name, task_name, args, params):
         # Note: modifies arguments
@@ -387,7 +382,7 @@ class DateHourParameter(Parameter):
 
     def serialize(self, dt):
         """
-        Converts the datetime to a string usnig the format string ``%Y-%m-%dT%H``.
+        Converts the datetime to a string using the format string ``%Y-%m-%dT%H``.
         """
         if dt is None:
             return str(dt)
@@ -414,9 +409,44 @@ class DateParameter(Parameter):
     July 10, 2013.
     """
 
+    date_format = '%Y-%m-%d'
+
     def parse(self, s):
-        """Parses a date string formatted as ``YYYY-MM-DD``."""
-        return datetime.date(*map(int, s.split('-')))
+        """
+        Parses a date string formatted as ``YYYY-MM-DD``.
+        """
+        return datetime.datetime.strptime(s, self.date_format).date()
+
+    def serialize(self, dt):
+        """
+        Converts the date to a string (formatted ``YYYY-MM-DD``.
+        """
+        if dt is None:
+            return str(dt)
+        return dt.strftime(self.date_format)
+
+
+class MonthParameter(DateParameter):
+    """
+    Parameter whose value is a :py:class:`~datetime.date`, specified to the month
+    (day of :py:class:`~datetime.date` is "rounded" to first of the month).
+
+    A MonthParameter is a Date string formatted ``YYYY-MM``. For example, ``2013-07`` specifies
+    July of 2013.
+    """
+
+    date_format = '%Y-%m'
+
+
+class YearParameter(DateParameter):
+    """
+    Parameter whose value is a :py:class:`~datetime.date`, specified to the year
+    (day and month of :py:class:`~datetime.date` is "rounded" to first day of the year).
+
+    A YearParameter is a Date string formatted ``YYYY``.
+    """
+
+    date_format = '%Y'
 
 
 class IntParameter(Parameter):
@@ -558,3 +588,29 @@ class TimeDeltaParameter(Parameter):
             return result
         else:
             raise ParameterException("Invalid time delta - could not parse %s" % input)
+
+
+class TaskParameter(Parameter):
+    """
+    A parameter that takes another luigi task class.
+
+    When used programatically, the parameter should be specified
+    directly with the :py:class:`luigi.task.Task` (sub) class. Like
+    ``MyMetaTask(my_task_param=my_tasks.MyTask)``. On the command line,
+    you specify the :py:attr:`luigi.task.Task.task_family`. Like
+
+    .. code:: console
+
+            $ luigi --module my_tasks MyMetaTask --my_task_param my_namespace.MyTask
+
+    Where ``my_namespace.MyTask`` is defined in the ``my_tasks`` python module.
+
+    When the :py:class:`luigi.task.Task` class is instantiated to an object.
+    The value will always be a task class (and not a string).
+    """
+
+    def parse(self, input):
+        """
+        Parse a task_famly using the :class:`~luigi.task_register.Register`
+        """
+        return task_register.Register.get_task_cls(input)

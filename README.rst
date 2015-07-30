@@ -16,11 +16,8 @@
  
 .. image:: https://img.shields.io/pypi/l/luigi.svg?style=flat
    :target: https://pypi.python.org/pypi/luigi
- 
-.. image:: https://pypip.in/py_versions/luigi/badge.svg?style=flat
-   :target: https://pypi.python.org/pypi/luigi
 
-Luigi is a Python package that helps you build complex pipelines of batch
+Luigi is a Python (2.7, 3.3, 3.4) package that helps you build complex pipelines of batch
 jobs. It handles dependency resolution, workflow management, visualization,
 handling failures, command line integration, and much more.
 
@@ -150,6 +147,7 @@ Several companies have written blog posts or presentation about Luigi:
 * `Buffer <https://overflow.bufferapp.com/2014/10/31/buffers-new-data-architecture/>`_
 * `SeatGeek <http://chairnerd.seatgeek.com/building-out-the-seatgeek-data-pipeline/>`_
 * `Treasure Data <http://blog.treasuredata.com/blog/2015/02/25/managing-the-data-pipeline-with-git-luigi/>`_
+* `Growth Intelligence <http://www.slideshare.net/growthintel/a-beginners-guide-to-building-data-pipelines-with-luigi>`_
 
 Please let us know if your company wants to be featured on this list!
 
@@ -164,7 +162,7 @@ External links
 --------------
 
 * `Mailing List <https://groups.google.com/d/forum/luigi-user/>`_ (Google Groups)
-* `Releases <https://pypi.python.org/pypi/luigi>`_ (PyPi)
+* `Releases <https://pypi.python.org/pypi/luigi>`_ (PyPI)
 * `Source code <https://github.com/spotify/luigi>`_ (Github)
 
 Authors

@@ -21,26 +21,35 @@ This test requires credentials that can access GCS & access to a bucket below.
 Follow the directions in the gcloud tools to set up local credentials.
 """
 
-import googleapiclient.errors
-import oauth2client
+from helpers import unittest
+try:
+    import googleapiclient.errors
+    import oauth2client
+except ImportError:
+    raise unittest.SkipTest('Unable to load googleapiclient module')
 import os
 import tempfile
 import unittest
 
 from luigi.contrib import gcs
 from target_test import FileSystemTargetTestMixin
+from nose.plugins.attrib import attr
 
 # In order to run this test, you should set these to your GCS project/bucket.
 # Unfortunately there's no mock
 PROJECT_ID = os.environ.get('GCS_TEST_PROJECT_ID', 'your_project_id_here')
 BUCKET_NAME = os.environ.get('GCS_TEST_BUCKET', 'your_test_bucket_here')
+TEST_FOLDER = os.environ.get('TRAVIS_BUILD_ID', 'gcs_test_folder')
 
 CREDENTIALS = oauth2client.client.GoogleCredentials.get_application_default()
 ATTEMPTED_BUCKET_CREATE = False
 
 
 def bucket_url(suffix):
-    return 'gs://{}/{}'.format(BUCKET_NAME, suffix)
+    """
+    Actually it's bucket + test folder name
+    """
+    return 'gs://{}/{}/{}'.format(BUCKET_NAME, TEST_FOLDER, suffix)
 
 
 class _GCSBaseTestCase(unittest.TestCase):
@@ -51,17 +60,21 @@ class _GCSBaseTestCase(unittest.TestCase):
         if not ATTEMPTED_BUCKET_CREATE:
             try:
                 self.client.client.buckets().insert(
-                    project=PROJECT_ID, body={'name': PROJECT_ID}).execute()
+                    project=PROJECT_ID, body={'name': BUCKET_NAME}).execute()
             except googleapiclient.errors.HttpError as ex:
                 if ex.resp.status != 409:  # bucket already exists
                     raise
 
             ATTEMPTED_BUCKET_CREATE = True
 
-        for item in self.client.listdir(bucket_url('')):
-            self.client.remove(item)
+        self.client.remove(bucket_url(''), recursive=True)
+        self.client.mkdir(bucket_url(''))
+
+    def tearDown(self):
+        self.client.remove(bucket_url(''), recursive=True)
 
 
+@attr('gcloud')
 class GCSClientTest(_GCSBaseTestCase):
 
     def test_not_exists(self):
@@ -130,14 +143,18 @@ class GCSClientTest(_GCSBaseTestCase):
 
     def test_put_file(self):
         with tempfile.NamedTemporaryFile() as fp:
-            fp.write(b'hi')
+            lorem = 'Lorem ipsum dolor sit amet, consectetuer adipiscing elit, sed diam nonummy nibh euismod tincidunt\n'
+            # Larger file than chunk size, fails with incorrect progress set up
+            big = lorem * 41943
+            fp.write(big)
             fp.flush()
 
             self.client.put(fp.name, bucket_url('test_put_file'))
             self.assertTrue(self.client.exists(bucket_url('test_put_file')))
-            self.assertEquals(b'hi', self.client.download(bucket_url('test_put_file')).read())
+            self.assertEquals(big, self.client.download(bucket_url('test_put_file')).read())
 
 
+@attr('gcloud')
 class GCSTargetTest(_GCSBaseTestCase, FileSystemTargetTestMixin):
 
     def create_target(self, format=None):

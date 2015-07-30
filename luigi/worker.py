@@ -24,7 +24,6 @@ When running in local mode, the worker talks directly to a :py:class:`~luigi.sch
 When you run a central server, the worker will talk to the scheduler using a :py:class:`~luigi.rpc.RemoteScheduler` instance.
 """
 
-import abc
 import collections
 import getpass
 import logging
@@ -43,7 +42,6 @@ import types
 
 from luigi import six
 
-from luigi import configuration
 from luigi import notifications
 from luigi.event import Event
 from luigi.task_register import load_task
@@ -174,6 +172,12 @@ class SingleProcessPool(object):
     def apply_async(self, function, args):
         return function(*args)
 
+    def close(self):
+        pass
+
+    def join(self):
+        pass
+
 
 class DequeQueue(collections.deque):
     """
@@ -217,7 +221,7 @@ def check_complete(task, out_queue):
 class worker(Config):
 
     ping_interval = FloatParameter(default=1.0,
-                                   config_path=dict(section='core', name='retry-delay'))
+                                   config_path=dict(section='core', name='worker-ping-interval'))
     keep_alive = BoolParameter(default=False,
                                config_path=dict(section='core', name='worker-keep-alive'))
     count_uniques = BoolParameter(default=False,
@@ -421,6 +425,9 @@ class Worker(object):
             self._log_unexpected_error(task)
             task.trigger_event(Event.BROKEN_TASK, task, ex)
             self._email_unexpected_error(task, formatted_traceback)
+        finally:
+            pool.close()
+            pool.join()
         return self.add_succeeded
 
     def _add(self, task, is_complete):
@@ -461,7 +468,7 @@ class Worker(object):
             runnable = worker().retry_external_tasks
 
             task.trigger_event(Event.DEPENDENCY_MISSING, task)
-            logger.warning('Task %s is not complete and run() is not implemented. Probably a missing external dependency.', task.task_id)
+            logger.warning('Data for %s does not exist (yet?). The task is an external data depedency, so it can not be run from this luigi process.', task.task_id)
 
         else:
             deps = task.deps()

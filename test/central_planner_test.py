@@ -19,6 +19,8 @@ import time
 import datetime
 from helpers import unittest
 
+from nose.plugins.attrib import attr
+
 import luigi.notifications
 from luigi.scheduler import DISABLED, DONE, FAILED, CentralPlannerScheduler
 
@@ -26,6 +28,7 @@ luigi.notifications.DEBUG = True
 WORKER = 'myworker'
 
 
+@attr('scheduler')
 class CentralPlannerTest(unittest.TestCase):
 
     def setUp(self):
@@ -667,33 +670,6 @@ class CentralPlannerTest(unittest.TestCase):
         self.assertEqual(2, response['n_pending_tasks'])
         self.assertEqual(2, response['n_unique_pending'])
 
-    def test_prefer_more_dependents(self):
-        self.sch.add_task(worker=WORKER, task_id='A')
-        self.sch.add_task(worker=WORKER, task_id='B')
-        self.sch.add_task(worker=WORKER, task_id='C', deps=['B'])
-        self.sch.add_task(worker=WORKER, task_id='D', deps=['B'])
-        self.sch.add_task(worker=WORKER, task_id='E', deps=['A'])
-        self.check_task_order('BACDE')
-
-    def test_prefer_readier_dependents(self):
-        self.sch.add_task(worker=WORKER, task_id='A')
-        self.sch.add_task(worker=WORKER, task_id='B')
-        self.sch.add_task(worker=WORKER, task_id='C')
-        self.sch.add_task(worker=WORKER, task_id='D')
-        self.sch.add_task(worker=WORKER, task_id='F', deps=['A', 'B', 'C'])
-        self.sch.add_task(worker=WORKER, task_id='G', deps=['A', 'B', 'C'])
-        self.sch.add_task(worker=WORKER, task_id='E', deps=['D'])
-        self.check_task_order('DABCFGE')
-
-    def test_ignore_done_dependents(self):
-        self.sch.add_task(worker=WORKER, task_id='A')
-        self.sch.add_task(worker=WORKER, task_id='B')
-        self.sch.add_task(worker=WORKER, task_id='C')
-        self.sch.add_task(worker=WORKER, task_id='D', priority=1)
-        self.sch.add_task(worker=WORKER, task_id='E', deps=['C', 'D'])
-        self.sch.add_task(worker=WORKER, task_id='F', deps=['A', 'B'])
-        self.check_task_order('DCABEF')
-
     def test_task_list_no_deps(self):
         self.sch.add_task(worker=WORKER, task_id='B', deps=('A',))
         self.sch.add_task(worker=WORKER, task_id='A')
@@ -741,6 +717,43 @@ class CentralPlannerTest(unittest.TestCase):
         test_task.failures.first_failure_time = fake_failure_time
         self.assertTrue(test_task.has_excessive_failures())
 
+    def test_quadratic_behavior(self):
+        """ Test that get_work is not taking linear amount of time.
+
+        This is of course impossible to test, however, doing reasonable
+        assumptions about hardware. This time should finish in a timely
+        manner.
+        """
+        # For 10000 it takes almost 1 second on my laptop.  Prior to these
+        # changes it was being slow already at NUM_TASKS=300
+        NUM_TASKS = 10000
+        for i in range(NUM_TASKS):
+            self.sch.add_task(worker=str(i), task_id=str(i), resources={})
+
+        for i in range(NUM_TASKS):
+            self.assertEqual(self.sch.get_work(worker=str(i))['task_id'], str(i))
+            self.sch.add_task(worker=str(i), task_id=str(i), status=DONE)
+
+    def test_get_work_speed(self):
+        """ Test that get_work is fast for few workers and many DONEs.
+
+        In #986, @daveFNbuck reported that he got a slowdown.
+        """
+        # This took almost 4 minutes without optimization.
+        # Now it takes 10 seconds on my machine.
+        NUM_PENDING = 1000
+        NUM_DONE = 200000
+        assert NUM_DONE >= NUM_PENDING
+        for i in range(NUM_PENDING):
+            self.sch.add_task(worker=WORKER, task_id=str(i), resources={})
+
+        for i in range(NUM_PENDING, NUM_DONE):
+            self.sch.add_task(worker=WORKER, task_id=str(i), status=DONE)
+
+        for i in range(NUM_PENDING):
+            res = int(self.sch.get_work(worker=WORKER)['task_id'])
+            self.assertTrue(0 <= res < NUM_PENDING)
+            self.sch.add_task(worker=WORKER, task_id=str(res), status=DONE)
 
 if __name__ == '__main__':
     unittest.main()

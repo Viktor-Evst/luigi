@@ -101,6 +101,8 @@ class scheduler(Config):
 
     visualization_graph = parameter.Parameter(default="svg", config_path=dict(section='scheduler', name='visualization-graph'))
 
+    prune_on_get_work = parameter.BoolParameter(default=False)
+
 
 def fix_time(x):
     # Backwards compatibility for a fix in Dec 2014. Prior to the fix, pickled state might store datetime objects
@@ -227,8 +229,9 @@ class Worker(object):
     def __init__(self, worker_id, last_active=None):
         self.id = worker_id
         self.reference = None  # reference to the worker in the real world. (Currently a dict containing just the host)
-        self.last_active = last_active  # seconds since epoch
+        self.last_active = last_active or time.time()  # seconds since epoch
         self.started = time.time()  # seconds since epoch
+        self.tasks = set()  # task objects
         self.info = {}
 
     def add_info(self, info):
@@ -243,6 +246,29 @@ class Worker(object):
         # Delete workers that haven't said anything for a while (probably killed)
         if self.last_active + config.worker_disconnect_delay < time.time():
             return True
+
+    def get_pending_tasks(self, state):
+        """
+        Get PENDING (and RUNNING) tasks for this worker.
+
+        You have to pass in the state for optimization reasons.
+        """
+        if len(self.tasks) < state.num_pending_tasks():
+            return six.moves.filter(lambda task: task.status in [PENDING, RUNNING],
+                                    self.tasks)
+        else:
+            return state.get_pending_tasks()
+
+    def is_trivial_worker(self, state):
+        """
+        If it's not an assistant having only tasks that are without
+        requirements.
+
+        We have to pass the state parameter for optimization reasons.
+        """
+        if self.assistant:
+            return False
+        return all(not task.resources for task in self.get_pending_tasks(state))
 
     @property
     def assistant(self):
@@ -299,6 +325,14 @@ class SimpleTaskState(object):
             for k, v in six.iteritems(self._active_workers):
                 if isinstance(v, float):
                     self._active_workers[k] = Worker(worker_id=k, last_active=v)
+
+            if any(not hasattr(w, 'tasks') for k, w in six.iteritems(self._active_workers)):
+                # If you load from an old format where Workers don't contain tasks.
+                for k, worker in six.iteritems(self._active_workers):
+                    worker.tasks = set()
+                for task in six.itervalues(self._tasks):
+                    for worker_id in task.workers:
+                        self._active_workers[worker_id].tasks.add(task)
         else:
             logger.info("No prior state file exists at %s. Starting with clean slate", self._state_path)
 
@@ -316,6 +350,12 @@ class SimpleTaskState(object):
     def get_pending_tasks(self):
         return itertools.chain.from_iterable(six.itervalues(self._status_tasks[status])
                                              for status in [PENDING, RUNNING])
+
+    def num_pending_tasks(self):
+        """
+        Return how many tasks are PENDING + RUNNING. O(1).
+        """
+        return len(self._status_tasks[PENDING]) + len(self._status_tasks[RUNNING])
 
     def get_task(self, task_id, default=None, setdefault=None):
         if setdefault:
@@ -597,6 +637,7 @@ class CentralPlannerScheduler(Scheduler):
 
         if runnable:
             task.workers.add(worker_id)
+            self._state.get_worker(worker_id).tasks.add(task)
 
         if expl is not None:
             task.expl = expl
@@ -628,25 +669,14 @@ class CentralPlannerScheduler(Scheduler):
                         used_resources[resource] += amount
         return used_resources
 
-    def _rank(self):
+    def _rank(self, task):
         """
         Return worker's rank function for task scheduling.
 
         :return:
         """
-        dependents = collections.defaultdict(int)
 
-        def not_done(t):
-            task = self._state.get_task(t, default=None)
-            return task is None or task.status != DONE
-        for task in self._state.get_pending_tasks():
-            if task.status != DONE:
-                deps = list(filter(not_done, task.deps))
-                inverse_num_deps = 1.0 / max(len(deps), 1)
-                for dep in deps:
-                    dependents[dep] += inverse_num_deps
-
-        return lambda task: (task.priority, dependents[task.id], -task.time)
+        return task.priority, -task.time
 
     def _schedulable(self, task):
         if task.status != PENDING:
@@ -671,8 +701,11 @@ class CentralPlannerScheduler(Scheduler):
         # TODO: remove tasks that can't be done, figure out if the worker has absolutely
         # nothing it can wait for
 
+        if self._config.prune_on_get_work:
+            self.prune()
+
         worker_id = kwargs['worker']
-        # Return remaining tasks that have no FAILED descendents
+        # Return remaining tasks that have no FAILED descendants
         self.update(worker_id, {'host': host})
         if assistant:
             self.add_worker(worker_id, [('assistant', assistant)])
@@ -681,14 +714,21 @@ class CentralPlannerScheduler(Scheduler):
         running_tasks = []
         upstream_table = {}
 
-        used_resources = self._used_resources()
         greedy_resources = collections.defaultdict(int)
         n_unique_pending = 0
-        greedy_workers = dict((worker.id, worker.info.get('workers', 1))
-                              for worker in self._state.get_active_workers())
 
-        tasks = list(self._state.get_pending_tasks())
-        tasks.sort(key=self._rank(), reverse=True)
+        worker = self._state.get_worker(worker_id)
+        if worker.is_trivial_worker(self._state):
+            relevant_tasks = worker.get_pending_tasks(self._state)
+            used_resources = collections.defaultdict(int)
+            greedy_workers = dict()  # If there's no resources, then they can grab any task
+        else:
+            relevant_tasks = self._state.get_pending_tasks()
+            used_resources = self._used_resources()
+            greedy_workers = dict((worker.id, worker.info.get('workers', 1))
+                                  for worker in self._state.get_active_workers())
+        tasks = list(relevant_tasks)
+        tasks.sort(key=self._rank, reverse=True)
 
         for task in tasks:
             upstream_status = self._upstream_status(task.id, upstream_table)
@@ -707,12 +747,15 @@ class CentralPlannerScheduler(Scheduler):
                 if len(task.workers) == 1 and not assistant:
                     n_unique_pending += 1
 
+            if best_task:
+                continue
+
             if task.status == RUNNING and (task.worker_running in greedy_workers):
                 greedy_workers[task.worker_running] -= 1
                 for resource, amount in six.iteritems((task.resources or {})):
                     greedy_resources[resource] += amount
 
-            if not best_task and self._schedulable(task) and self._has_resources(task.resources, greedy_resources):
+            if self._schedulable(task) and self._has_resources(task.resources, greedy_resources):
                 if in_workers and self._has_resources(task.resources, used_resources):
                     best_task = task
                 else:
@@ -760,6 +803,8 @@ class CentralPlannerScheduler(Scheduler):
                 dep_id = task_stack.pop()
                 if self._state.has_task(dep_id):
                     dep = self._state.get_task(dep_id)
+                    if dep.status == DONE:
+                        continue
                     if dep_id not in upstream_status_table:
                         if dep.status == PENDING and dep.deps:
                             task_stack = task_stack + [dep_id] + list(dep.deps)

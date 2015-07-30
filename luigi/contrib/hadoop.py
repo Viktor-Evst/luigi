@@ -25,7 +25,6 @@ an example of how to run a Hadoop job.
 from __future__ import print_function
 
 import abc
-import binascii
 import datetime
 import glob
 import logging
@@ -45,7 +44,7 @@ import tempfile
 import warnings
 from hashlib import md5
 from itertools import groupby
-from cached_property import cached_property
+import cached_property
 
 from luigi import six
 
@@ -67,7 +66,7 @@ except ImportError:
 
 logger = logging.getLogger('luigi-interface')
 
-_attached_packages = []
+_attached_packages = [cached_property]
 
 
 class hadoop(luigi.task.Config):
@@ -144,11 +143,6 @@ def create_packages_archive(packages, filename):
             package = __import__(package.__name__.rpartition('.')[0], None, None, 'non_empty')
 
         n = package.__name__.replace(".", "/")
-
-        if n == "__main__":
-            continue
-
-        logger.debug("Adding %s" % n)
 
         if getattr(package, "__path__", None):
             # TODO: (BUG) picking only the first path does not
@@ -640,7 +634,7 @@ class BaseHadoopJobTask(luigi.Task):
 
     def jobconfs(self):
         jcs = []
-        jcs.append('mapred.job.name="%s"' % self.task_id)
+        jcs.append('mapred.job.name=%s' % self.task_id)
         if self.mr_priority != NotImplemented:
             jcs.append('mapred.job.priority=%s' % self.mr_priority())
         pool = self._get_pool()
@@ -729,15 +723,15 @@ class JobTask(BaseHadoopJobTask):
             jcs.append('mapred.reduce.tasks=%s' % self.n_reduce_tasks)
         return jcs
 
-    @cached_property
+    @cached_property.cached_property
     def serialize(self):
         return DataInterchange[self.data_interchange_format]['serialize']
 
-    @cached_property
+    @cached_property.cached_property
     def internal_serialize(self):
         return DataInterchange[self.data_interchange_format]['internal_serialize']
 
-    @cached_property
+    @cached_property.cached_property
     def deserialize(self):
         return DataInterchange[self.data_interchange_format]['deserialize']
 
@@ -907,7 +901,7 @@ class JobTask(BaseHadoopJobTask):
         if self.__module__ == '__main__':
             d = pickle.dumps(self)
             module_name = os.path.basename(sys.argv[0]).rsplit('.', 1)[0]
-            d = d.replace(b'__main__', module_name.encode("utf-8"))
+            d = d.replace(b'(c__main__', "(c" + module_name)
             open(file_name, "wb").write(d)
 
         else:

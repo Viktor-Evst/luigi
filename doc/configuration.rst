@@ -1,11 +1,17 @@
 Configuration
 =============
 
-All configuration can be done by adding a configuration file named
-client.cfg to your current working directory or /etc/luigi (although
-this is further configurable). The config file is broken into sections,
-each controlling a different part of the config. Example
-/etc/luigi/client.cfg:
+All configuration can be done by adding a configuration files. They are looked for in:
+
+ * ``/etc/luigi/client.cfg``
+ * ``luigi.cfg`` (or its legacy name ``client.cfg``) in your current working directory
+ * ``LUIGI_CONFIG_PATH`` environment variable
+
+in increasing order of preference. The order only matters in case of key conflicts (see docs for ConfigParser_)
+
+.. _ConfigParser: https://docs.python.org/2/library/configparser.html
+
+The config file is broken into sections, each controlling a different part of the config. Example configuration file:
 
 ::
 
@@ -220,6 +226,10 @@ AWS_ACCESS_KEY
 AWS_SECRET_KEY
   Your AWS secret key
 
+force-send
+  If true, e-mails are sent in all run configurations (even if stdout is
+  connected to a tty device).  Defaults to False.
+  
 region
   Your AWS region. Defaults to us-east-1.
 
